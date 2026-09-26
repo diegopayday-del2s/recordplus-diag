@@ -1,6 +1,6 @@
 {
   "name": "recordplus-diag",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Diagnostico do RecordPlus em TV Samsung Tizen 5.5",
   "packageType": "mods",
   "appName": "RecordPlus Diag",

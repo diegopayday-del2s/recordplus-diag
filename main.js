@@ -4,7 +4,8 @@
    3) mostra na tela erros de JS, rede, DRM e player
    v1.0.2: polyfills ES2023+ (toSorted etc.) que o RecordPlus exige
    v1.0.3: site exige Trusted Types, entao nada de innerHTML; o diag nunca
-           pode quebrar fetch/XHR do site; cada linha vai para console.info [RPDIAG] */
+           pode quebrar fetch/XHR do site; cada linha vai para console.info [RPDIAG]
+   v1.0.4: barra so no frame principal do recordplus.com (nao cobre iframe do Google) */
 (function () {
   'use strict';
   if (window.__rpDiag) return;
@@ -34,8 +35,12 @@
     return ['Sem erro ate agora. Faca login e de play.', '#9ecbff'];
   }
 
+  /* TizenBrew injeta em todo frame (inclusive iframes do Google); barra so na pagina principal */
+  var principal = false;
+  try { principal = window.top === window && /(^|\.)recordplus\.com$/.test(location.hostname); } catch (_) {}
+
   function montar() {
-    if (box) return;
+    if (box || !principal) return;
     var raiz = document.documentElement;
     if (!raiz || !document.body) { setTimeout(montar, 150); return; }
     box = document.createElement('div');
@@ -385,6 +390,7 @@
 
   /* ---------- start ---------- */
   montar();
+  if (!principal) { log('info', 'Frame: ' + curto(location.href, 100)); return; }
   log('info', 'Inicio: ' + location.href);
   log('info', 'UA: ' + navigator.userAgent);
   if (faltaSintaxe.length) log('sintaxe', 'Motor NAO entende (sem polyfill possivel): ' + faltaSintaxe.join(', '));
