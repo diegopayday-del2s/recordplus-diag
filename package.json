@@ -1,12 +1,11 @@
 {
   "name": "recordplus-diag",
-  "version": "1.0.0",
-  "description": "Diagnostico do RecordPlus em TV Samsung Tizen 5.5: polyfills + painel de erros na tela",
+  "version": "1.0.1",
+  "description": "Diagnostico do RecordPlus em TV Samsung Tizen 5.5",
   "packageType": "mods",
   "appName": "RecordPlus Diag",
   "websiteURL": "https://www.recordplus.com",
   "main": "main.js",
-  "evaluateScriptOnDocumentStart": true,
-  "keys": ["ColorF0Red"],
+  "keys": [],
   "license": "MIT"
 }
