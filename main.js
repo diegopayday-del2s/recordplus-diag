@@ -2,7 +2,7 @@
    1) testa o que o motor (Chromium 69) nao suporta
    2) aplica polyfills do que da para remendar
    3) mostra na tela erros de JS, rede, DRM e player
-   Botao VERMELHO do controle: esconde/mostra o painel */
+   v1.0.2: polyfills ES2023+ (toSorted etc.) que o RecordPlus exige */
 (function () {
   'use strict';
   if (window.__rpDiag) return;
@@ -10,7 +10,7 @@
 
   var MAX = 80, VISIVEIS = 14;
   var logs = [];
-  var stats = { sintaxe: 0, js: 0, rede: 0, bloqueio: 0, drm: 0, video: 0 };
+  var stats = { sintaxe: 0, js: 0, faltaFn: 0, rede: 0, bloqueio: 0, drm: 0, video: 0 };
   var box = null, head = null, list = null, visivel = true, tocou = false;
   var fetchOriginal = window.fetch ? window.fetch.bind(window) : null;
 
@@ -24,6 +24,7 @@
   function veredito() {
     if (stats.sintaxe > 0) return ['JS novo demais p/ Chromium 69. Sem correcao do nosso lado.', '#ff5c5c'];
     if (stats.drm > 0) return ['Licenca DRM recusada ou falhou. Sem contorno legitimo.', '#ff5cf0'];
+    if (stats.faltaFn > 0) return ['Falta funcao no motor (ver linha amarela). Da pra remendar.', '#ff9f43'];
     if (stats.bloqueio > 0) return ['Servidor recusando (401/403): login ou dispositivo bloqueado.', '#ffd166'];
     if (stats.video > 0) return ['Player falhou (ver codigo do erro).', '#ff5cf0'];
     if (tocou) return ['VIDEO TOCANDO. Funcionou.', '#6be675'];
@@ -99,6 +100,16 @@
   testaApi('structuredClone', function () { return window.structuredClone; });
   testaApi('queueMicrotask', function () { return window.queueMicrotask; });
   testaApi('Array.findLast', function () { return Array.prototype.findLast; });
+  testaApi('Array.toSorted', function () { return Array.prototype.toSorted; });
+  testaApi('Array.toReversed', function () { return Array.prototype.toReversed; });
+  testaApi('Array.toSpliced', function () { return Array.prototype.toSpliced; });
+  testaApi('Array.with', function () { return Array.prototype['with']; });
+  testaApi('Object.groupBy', function () { return Object.groupBy; });
+  testaApi('Map.groupBy', function () { return Map.groupBy; });
+  testaApi('Promise.withResolvers', function () { return Promise.withResolvers; });
+  testaApi('Set.union', function () { return Set.prototype.union; });
+  testaApi('String.isWellFormed', function () { return String.prototype.isWellFormed; });
+  testaApi('Array.fromAsync', function () { return Array.fromAsync; });
 
   /* ---------- 2) polyfills ---------- */
   function def(obj, nome, fn) { if (!obj[nome]) { try { Object.defineProperty(obj, nome, { value: fn, writable: true, configurable: true }); } catch (_) { obj[nome] = fn; } } }
@@ -125,7 +136,86 @@
   def(Array.prototype, 'findLast', function (f, t) { for (var i = this.length - 1; i >= 0; i--) { if (f.call(t, this[i], i, this)) return this[i]; } return undefined; });
   def(Array.prototype, 'findLastIndex', function (f, t) { for (var i = this.length - 1; i >= 0; i--) { if (f.call(t, this[i], i, this)) return i; } return -1; });
   def(window, 'queueMicrotask', function (cb) { Promise.resolve().then(cb); });
-  def(window, 'structuredClone', function (v) { return v === undefined ? undefined : JSON.parse(JSON.stringify(v)); });
+  function clonar(v, vis) {
+    if (v === null || typeof v !== 'object') return v;
+    if (vis.has(v)) return vis.get(v);
+    var r, i;
+    if (v instanceof Date) { r = new Date(v.getTime()); }
+    else if (v instanceof RegExp) { r = new RegExp(v.source, v.flags); }
+    else if (v instanceof Map) { r = new Map(); vis.set(v, r); v.forEach(function (val, k) { r.set(clonar(k, vis), clonar(val, vis)); }); return r; }
+    else if (v instanceof Set) { r = new Set(); vis.set(v, r); v.forEach(function (val) { r.add(clonar(val, vis)); }); return r; }
+    else if (v instanceof ArrayBuffer) { r = v.slice(0); }
+    else if (ArrayBuffer.isView(v)) { r = v.slice ? v.slice() : new v.constructor(v.buffer.slice(0)); }
+    else if (Array.isArray(v)) { r = []; vis.set(v, r); for (i = 0; i < v.length; i++) r[i] = clonar(v[i], vis); return r; }
+    else { r = {}; vis.set(v, r); Object.keys(v).forEach(function (k) { r[k] = clonar(v[k], vis); }); return r; }
+    vis.set(v, r);
+    return r;
+  }
+  def(window, 'structuredClone', function (v) { return clonar(v, new Map()); });
+
+  /* ES2023+: o site usa, o Chromium 94 da TV nao tem */
+  function copia(a) { return Array.prototype.slice.call(a); }
+  function idx(i, len) { var n = Math.trunc(i) || 0; if (n < 0) n += len; if (n < 0 || n >= len) throw new RangeError('Invalid index : ' + i); return n; }
+  def(Array.prototype, 'toSorted', function (cmp) {
+    if (cmp !== undefined && typeof cmp !== 'function') throw new TypeError('The comparison function must be either a function or undefined');
+    return copia(this).sort(cmp);
+  });
+  def(Array.prototype, 'toReversed', function () { return copia(this).reverse(); });
+  def(Array.prototype, 'toSpliced', function () { var c = copia(this); Array.prototype.splice.apply(c, arguments); return c; });
+  def(Array.prototype, 'with', function (i, v) { var n = idx(i, this.length); var c = copia(this); c[n] = v; return c; });
+
+  try {
+    var TA = Object.getPrototypeOf(Int8Array.prototype);
+    def(TA, 'toSorted', function (cmp) { return this.slice().sort(cmp); });
+    def(TA, 'toReversed', function () { return this.slice().reverse(); });
+    def(TA, 'with', function (i, v) { var n = idx(i, this.length); var c = this.slice(); c[n] = v; return c; });
+    def(TA, 'findLast', function (f, t) { for (var i = this.length - 1; i >= 0; i--) { if (f.call(t, this[i], i, this)) return this[i]; } return undefined; });
+    def(TA, 'findLastIndex', function (f, t) { for (var i = this.length - 1; i >= 0; i--) { if (f.call(t, this[i], i, this)) return i; } return -1; });
+  } catch (_) {}
+
+  def(Object, 'groupBy', function (items, fn) {
+    var o = Object.create(null), i = 0;
+    Array.from(items).forEach(function (x) { var k = fn(x, i++); (o[k] = o[k] || []).push(x); });
+    return o;
+  });
+  def(Map, 'groupBy', function (items, fn) {
+    var m = new Map(), i = 0;
+    Array.from(items).forEach(function (x) { var k = fn(x, i++); if (!m.has(k)) m.set(k, []); m.get(k).push(x); });
+    return m;
+  });
+  def(Promise, 'withResolvers', function () {
+    var r = {};
+    r.promise = new this(function (res, rej) { r.resolve = res; r.reject = rej; });
+    return r;
+  });
+
+  function chaves(o) { return Array.from(typeof o.keys === 'function' ? o.keys() : o); }
+  def(Set.prototype, 'union', function (o) { var r = new Set(this); chaves(o).forEach(function (x) { r.add(x); }); return r; });
+  def(Set.prototype, 'intersection', function (o) { var r = new Set(); this.forEach(function (x) { if (o.has(x)) r.add(x); }); return r; });
+  def(Set.prototype, 'difference', function (o) { var r = new Set(); this.forEach(function (x) { if (!o.has(x)) r.add(x); }); return r; });
+  def(Set.prototype, 'symmetricDifference', function (o) { var s = this, r = new Set(this); chaves(o).forEach(function (x) { if (s.has(x)) r['delete'](x); else r.add(x); }); return r; });
+  def(Set.prototype, 'isSubsetOf', function (o) { var ok = true; this.forEach(function (x) { if (!o.has(x)) ok = false; }); return ok; });
+  def(Set.prototype, 'isSupersetOf', function (o) { var s = this; return chaves(o).every(function (x) { return s.has(x); }); });
+  def(Set.prototype, 'isDisjointFrom', function (o) { var ok = true; this.forEach(function (x) { if (o.has(x)) ok = false; }); return ok; });
+
+  def(String.prototype, 'isWellFormed', function () {
+    return !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(String(this));
+  });
+  def(String.prototype, 'toWellFormed', function () {
+    return String(this).replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|([^\uD800-\uDBFF])[\uDC00-\uDFFF]|^[\uDC00-\uDFFF]/g,
+      function (m, p) { return p ? p + '\uFFFD' : '\uFFFD'; });
+  });
+
+  def(Array, 'fromAsync', function (it, fn, t) {
+    var arr = Array.from(it), out = [], i = 0;
+    function passo() {
+      if (i >= arr.length) return Promise.resolve(out);
+      var n = i++;
+      return Promise.resolve(arr[n]).then(function (x) { return fn ? fn.call(t, x, n) : x; })
+        .then(function (y) { out.push(y); return passo(); });
+    }
+    return passo();
+  });
 
   /* ---------- 3) captura de erros ---------- */
   window.addEventListener('error', function (e) {
@@ -144,6 +234,8 @@
     var m = (e && e.message) || 'erro';
     var sint = /SyntaxError|Unexpected token|Unexpected identifier|Invalid regular expression|Invalid or unexpected/i.test(m);
     if (sint) stats.sintaxe++; else stats.js++;
+    var fx2 = /\.?([A-Za-z_$][\w$]*) is not a function/.exec(m);
+    if (fx2) { stats.faltaFn++; log('js', 'Funcao ausente no motor: ' + fx2[1] + ' (mandar pro Claude)'); }
     var onde = e.filename ? ' @ ' + nomeArq(e.filename) + ':' + (e.lineno || 0) : '';
     if (m === 'Script error.') m += ' (arquivo de outro dominio, detalhe oculto)';
     log(sint ? 'sintaxe' : 'js', m + onde);
@@ -163,7 +255,10 @@
         if (typeof x === 'object') { try { return JSON.stringify(x); } catch (_) { return String(x); } }
         return String(x);
       });
-      log('console', partes.join(' '));
+      var txt = partes.join(' ');
+      var fx = /\.?([A-Za-z_$][\w$]*) is not a function/.exec(txt);
+      if (fx) { stats.faltaFn++; log('js', 'Funcao ausente no motor: ' + fx[1] + ' (mandar pro Claude)'); }
+      log('console', txt);
     } catch (_) {}
     return ce.apply(console, arguments);
   };
@@ -176,6 +271,7 @@
       log('drm', 'Licenca ' + (status || 'sem resposta') + ' ' + (metodo || '') + ' ' + curto(url, 120) + (extra ? ' ' + extra : ''));
       return;
     }
+    if (status === 401 && /\/api\/session/.test(url)) { log('info', 'Sessao sem login ainda (401 normal): ' + curto(url, 80)); return; }
     stats.rede++;
     if (status === 401 || status === 403) stats.bloqueio++;
     log('rede', (status || 'falhou') + ' ' + (metodo || 'GET') + ' ' + curto(url, 140) + (extra ? ' ' + extra : ''));
