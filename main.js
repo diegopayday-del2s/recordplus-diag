@@ -1,8 +1,10 @@
 /* RecordPlus Diag: injetado pelo TizenBrew no recordplus.com
-   1) testa o que o motor (Chromium 69) nao suporta
+   1) testa o que o motor (Chromium 94 do TizenBrew) nao suporta
    2) aplica polyfills do que da para remendar
    3) mostra na tela erros de JS, rede, DRM e player
-   v1.0.2: polyfills ES2023+ (toSorted etc.) que o RecordPlus exige */
+   v1.0.2: polyfills ES2023+ (toSorted etc.) que o RecordPlus exige
+   v1.0.3: site exige Trusted Types, entao nada de innerHTML; o diag nunca
+           pode quebrar fetch/XHR do site; cada linha vai para console.info [RPDIAG] */
 (function () {
   'use strict';
   if (window.__rpDiag) return;
@@ -22,7 +24,7 @@
   var CORES = { sintaxe: '#ff5c5c', js: '#ff9f43', console: '#ff9f43', rede: '#ffd166', drm: '#ff5cf0', video: '#ff5cf0', ok: '#6be675', info: '#9ecbff' };
 
   function veredito() {
-    if (stats.sintaxe > 0) return ['JS novo demais p/ Chromium 69. Sem correcao do nosso lado.', '#ff5c5c'];
+    if (stats.sintaxe > 0) return ['JS novo demais p/ Chromium 94. Sem correcao do nosso lado.', '#ff5c5c'];
     if (stats.drm > 0) return ['Licenca DRM recusada ou falhou. Sem contorno legitimo.', '#ff5cf0'];
     if (stats.faltaFn > 0) return ['Falta funcao no motor (ver linha amarela). Da pra remendar.', '#ff9f43'];
     if (stats.bloqueio > 0) return ['Servidor recusando (401/403): login ou dispositivo bloqueado.', '#ffd166'];
@@ -49,11 +51,14 @@
     render();
   }
 
+  /* innerHTML = '' e bloqueado pelo Trusted Types do site */
+  function limpa(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+
   function render() {
     if (!box) return;
     box.style.display = visivel ? 'block' : 'none';
     var v = veredito();
-    head.innerHTML = '';
+    limpa(head);
     var s1 = document.createElement('span');
     s1.textContent = 'RP DIAG | sintaxe ' + stats.sintaxe + ' | js ' + stats.js + ' | rede ' + stats.rede +
       ' (' + stats.bloqueio + ' bloq) | drm ' + stats.drm + ' | video ' + stats.video + ' | ';
@@ -61,7 +66,7 @@
     s2.style.color = v[1];
     s2.textContent = v[0];
     head.appendChild(s1); head.appendChild(s2);
-    list.innerHTML = '';
+    limpa(list);
     var ini = Math.max(0, logs.length - VISIVEIS);
     for (var i = ini; i < logs.length; i++) {
       var l = logs[i], d = document.createElement('div');
@@ -73,10 +78,12 @@
     }
   }
 
+  var ci = console.info;
   function log(tipo, msg) {
     logs.push({ t: agora(), tipo: tipo, msg: curto(msg, 260) });
     if (logs.length > MAX) logs.shift();
-    render();
+    try { ci.call(console, '[RPDIAG] [' + tipo + '] ' + msg); } catch (_) {}
+    try { render(); } catch (_) {}
   }
 
   /* ---------- 1) o que falta no motor ---------- */
@@ -282,10 +289,10 @@
       var url = typeof input === 'string' ? input : (input && input.url) || '';
       var metodo = (init && init.method) || (input && input.method) || 'GET';
       return fetchOriginal(input, init).then(function (r) {
-        if (!r.ok && r.type !== 'opaque') regRede(r.status, url, metodo);
+        try { if (!r.ok && r.type !== 'opaque') regRede(r.status, url, metodo); } catch (_) {}
         return r;
       }, function (err) {
-        regRede(0, url, metodo, err && err.message);
+        try { regRede(0, url, metodo, err && err.message); } catch (_) {}
         throw err;
       });
     };
@@ -296,7 +303,7 @@
   XMLHttpRequest.prototype.send = function () {
     var x = this;
     x.addEventListener('loadend', function () {
-      if (x.status >= 400 || (x.status === 0 && x.readyState === 4)) regRede(x.status, x.__rp && x.__rp.u, x.__rp && x.__rp.m);
+      try { if (x.status >= 400 || (x.status === 0 && x.readyState === 4)) regRede(x.status, x.__rp && x.__rp.u, x.__rp && x.__rp.m); } catch (_) {}
     });
     return XS.apply(this, arguments);
   };
