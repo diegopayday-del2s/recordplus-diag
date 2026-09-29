@@ -5,7 +5,8 @@
    v1.0.2: polyfills ES2023+ (toSorted etc.) que o RecordPlus exige
    v1.0.3: site exige Trusted Types, entao nada de innerHTML; o diag nunca
            pode quebrar fetch/XHR do site; cada linha vai para console.info [RPDIAG]
-   v1.0.4: barra so no frame principal do recordplus.com (nao cobre iframe do Google) */
+   v1.0.4: barra so no frame principal do recordplus.com (nao cobre iframe do Google)
+   v1.0.5: AbortSignal.timeout/any/abort/throwIfAborted (login quebrava) */
 (function () {
   'use strict';
   if (window.__rpDiag) return;
@@ -229,6 +230,28 @@
     return passo();
   });
 
+  /* AbortSignal.timeout / any / throwIfAborted (Chrome 100+), usados no login */
+  if (window.AbortSignal) {
+    def(AbortSignal, 'timeout', function (ms) {
+      var c = new AbortController();
+      setTimeout(function () { try { c.abort(new DOMException('signal timed out', 'TimeoutError')); } catch (_) { c.abort(); } }, ms);
+      return c.signal;
+    });
+    def(AbortSignal, 'any', function (sinais) {
+      var c = new AbortController();
+      Array.from(sinais).some(function (s) {
+        if (s.aborted) { c.abort(s.reason); return true; }
+        s.addEventListener('abort', function () { c.abort(s.reason); }, { once: true });
+        return false;
+      });
+      return c.signal;
+    });
+    def(AbortSignal, 'abort', function (r) { var c = new AbortController(); c.abort(r); return c.signal; });
+    def(AbortSignal.prototype, 'throwIfAborted', function () {
+      if (this.aborted) throw this.reason || new DOMException('signal is aborted without reason', 'AbortError');
+    });
+  }
+
   /* ---------- 3) captura de erros ---------- */
   window.addEventListener('error', function (e) {
     var t = e && e.target;
@@ -381,6 +404,97 @@
       }).catch(function () {});
     });
   }
+
+  /* ---------- 5) navegacao pelo controle: o site nao tem foco espacial ---------- */
+  /*NAV-INICIO*/
+  function navegacao() {
+    if (window.__rpNav) return;
+    window.__rpNav = true;
+    var SEL = 'a[href],button,input:not([type=hidden]),select,textarea,[tabindex]:not([tabindex="-1"]),' +
+      '[role=button],[role=link],[role=tab],[role=menuitem],[role=option],[role=checkbox]';
+    var atual = null, antes = null;
+
+    function ok(e) {
+      if (box && box.contains(e)) return false;
+      if (e.disabled || e.getAttribute('aria-hidden') === 'true') return false;
+      var r = e.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4) return false;
+      var cs = getComputedStyle(e);
+      return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0.05;
+    }
+    function lista() { return Array.prototype.filter.call(document.querySelectorAll(SEL), ok); }
+    function campo(e) { return e && (e.tagName === 'TEXTAREA' || (e.tagName === 'INPUT' && !/^(checkbox|radio|button|submit)$/.test(e.type))); }
+    function desmarca() {
+      if (atual && antes) { atual.style.outline = antes[0]; atual.style.boxShadow = antes[1]; }
+    }
+    function marca(e) {
+      if (atual !== e) { desmarca(); antes = [e.style.outline, e.style.boxShadow]; }
+      atual = e;
+      e.style.outline = '4px solid #ffd166';
+      e.style.boxShadow = '0 0 0 8px rgba(255,209,102,0.35)';
+      /* campo de texto so recebe foco no OK (foco abre o teclado da TV) */
+      if (campo(e)) { if (document.activeElement && document.activeElement !== e) document.activeElement.blur(); }
+      else { try { e.focus({ preventScroll: true }); } catch (_) {} }
+      try { e.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) {}
+    }
+    function centro(r) { return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
+    function mover(dir) {
+      var l = lista();
+      if (!l.length) return;
+      var ref = atual && document.contains(atual) && ok(atual) ? atual : null;
+      if (!ref) { marca(l.filter(campo)[0] || l[0]); return; }
+      var a = ref.getBoundingClientRect(), ca = centro(a), melhor = null, nota = Infinity;
+      l.forEach(function (e) {
+        if (e === ref || ref.contains(e) || e.contains(ref)) return;
+        var b = e.getBoundingClientRect(), cb = centro(b), prim, sec;
+        if (dir === 'dir') { if (cb.x <= ca.x + 1) return; prim = b.left - a.right; sec = Math.abs(cb.y - ca.y); }
+        else if (dir === 'esq') { if (cb.x >= ca.x - 1) return; prim = a.left - b.right; sec = Math.abs(cb.y - ca.y); }
+        else if (dir === 'baixo') { if (cb.y <= ca.y + 1) return; prim = b.top - a.bottom; sec = Math.abs(cb.x - ca.x); }
+        else { if (cb.y >= ca.y - 1) return; prim = a.top - b.bottom; sec = Math.abs(cb.x - ca.x); }
+        var n = Math.max(prim, 0) + sec * 2;
+        if (n < nota) { nota = n; melhor = e; }
+      });
+      if (melhor) marca(melhor);
+      else if (dir === 'baixo') window.scrollBy(0, 400);
+      else if (dir === 'cima') window.scrollBy(0, -400);
+    }
+    var SETAS = { 37: 'esq', 38: 'cima', 39: 'dir', 40: 'baixo' };
+    window.addEventListener('keydown', function (ev) {
+      var k = ev.keyCode, d = SETAS[k];
+      var editando = campo(atual) && document.activeElement === atual;
+      if (d) {
+        if (editando && (d === 'esq' || d === 'dir')) {
+          try { var p = atual.selectionStart; if ((d === 'esq' && p > 0) || (d === 'dir' && p < atual.value.length)) return; } catch (_) {}
+        }
+        ev.preventDefault(); ev.stopPropagation();
+        if (editando) atual.blur();
+        mover(d);
+      } else if (k === 13 && atual && document.contains(atual)) {
+        if (editando) return;
+        ev.preventDefault(); ev.stopPropagation();
+        if (campo(atual)) { atual.focus(); try { atual.click(); } catch (_) {} }
+        else atual.click();
+      } else if ((k === 65376 || k === 65385) && editando) {
+        /* Concluir / Cancelar do teclado da TV */
+        atual.blur();
+      }
+    }, true);
+    /* a navegacao nativa do Tizen age no keyup/keypress e brigava com a nossa */
+    ['keyup', 'keypress'].forEach(function (t) {
+      window.addEventListener(t, function (ev) {
+        var editando = campo(atual) && document.activeElement === atual;
+        if (SETAS[ev.keyCode] || (ev.keyCode === 13 && !editando)) { ev.preventDefault(); ev.stopPropagation(); }
+      }, true);
+    });
+    document.addEventListener('focusin', function (ev) {
+      var e = ev.target;
+      if (e && e !== atual && e.matches && e.matches(SEL) && ok(e)) marca(e);
+    }, true);
+    setTimeout(function () { if (!atual) mover('baixo'); }, 1500);
+  }
+  /*NAV-FIM*/
+  /* desligada ate resolver a briga com a navegacao nativa do Tizen */
+  if (principal && window.__rpNavLigada) { try { navegacao(); } catch (e) { log('js', 'navegacao: ' + e.message); } }
 
   /* ---------- controle ---------- */
   try { if (window.tizen && tizen.tvinputdevice) tizen.tvinputdevice.registerKey('ColorF0Red'); } catch (_) {}
