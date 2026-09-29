@@ -6,7 +6,9 @@
    v1.0.3: site exige Trusted Types, entao nada de innerHTML; o diag nunca
            pode quebrar fetch/XHR do site; cada linha vai para console.info [RPDIAG]
    v1.0.4: barra so no frame principal do recordplus.com (nao cobre iframe do Google)
-   v1.0.5: AbortSignal.timeout/any/abort/throwIfAborted (login quebrava) */
+   v1.0.5: AbortSignal.timeout/any/abort/throwIfAborted (login quebrava)
+   v1.0.6: log de codecs/buffers do player; testes pelo controle (so H.264,
+           so PlayReady, abrir app oficial ctv.recordplus.com/tizen) */
 (function () {
   'use strict';
   if (window.__rpDiag) return;
@@ -496,10 +498,76 @@
   /* desligada ate resolver a briga com a navegacao nativa do Tizen */
   if (principal && window.__rpNavLigada) { try { navegacao(); } catch (e) { log('js', 'navegacao: ' + e.message); } }
 
+  /* ---------- 6) testes de video ligados pelo controle (v1.0.6) ---------- */
+  function lerOpc(k) { try { return localStorage.getItem('__rp_' + k) === '1'; } catch (_) { return false; } }
+  function gravarOpc(k, v) { try { localStorage.setItem('__rp_' + k, v ? '1' : '0'); } catch (_) {} }
+  var opc = { h264: lerOpc('h264'), playready: lerOpc('playready') };
+
+  var RX_CODEC_PESADO = /hvc1|hev1|dvh1|dvhe|av01|vp09|vp9|ec-3|ac-3|mp4a\.a6|mp4a\.a5/i;
+  if (window.MediaSource) {
+    var its = MediaSource.isTypeSupported.bind(MediaSource);
+    var vistos = {};
+    MediaSource.isTypeSupported = function (t) {
+      var r = its(t);
+      if (r && opc.h264 && RX_CODEC_PESADO.test(t)) r = false;
+      if (!vistos[t]) { vistos[t] = 1; log('info', 'Codec ' + (r ? 'SIM' : 'nao') + ': ' + curto(t, 110)); }
+      return r;
+    };
+    var asb = MediaSource.prototype.addSourceBuffer;
+    MediaSource.prototype.addSourceBuffer = function (t) {
+      log('info', 'Player abriu buffer: ' + curto(t, 120));
+      try { return asb.apply(this, arguments); }
+      catch (err) { stats.video++; log('video', 'Buffer recusado: ' + t + ' ' + err.message); throw err; }
+    };
+  }
+  if (navigator.requestMediaKeySystemAccess && opc.playready) {
+    var rq2 = navigator.requestMediaKeySystemAccess;
+    navigator.requestMediaKeySystemAccess = function (ks) {
+      if (/widevine/i.test(ks)) return Promise.reject(new DOMException('Widevine desligado pelo teste', 'NotSupportedError'));
+      return rq2.apply(navigator, arguments);
+    };
+  }
+
+  /* o erro ja e pego no capture do window; aqui so o caminho ate ele */
+  function vigiaVideo(v) {
+    if (v.__rpv2) return;
+    v.__rpv2 = 1;
+    ['loadedmetadata', 'waiting', 'stalled'].forEach(function (t) {
+      v.addEventListener(t, function () {
+        if (t === 'loadedmetadata') log('ok', 'Video ' + v.videoWidth + 'x' + v.videoHeight + ' carregou metadados');
+        else log('info', 'Video ' + t + ' em ' + Math.round(v.currentTime) + 's');
+      });
+    });
+  }
+  setInterval(function () { Array.prototype.forEach.call(document.getElementsByTagName('video'), vigiaVideo); }, 1000);
+
+  var OFICIAL = 'https://ctv.recordplus.com/tizen/';
+  function alterna(k, nome) {
+    opc[k] = !opc[k];
+    gravarOpc(k, opc[k]);
+    log('info', nome + (opc[k] ? ' LIGADO' : ' desligado') + ', recarregando...');
+    setTimeout(function () { location.reload(); }, 1200);
+  }
+
   /* ---------- controle ---------- */
-  try { if (window.tizen && tizen.tvinputdevice) tizen.tvinputdevice.registerKey('ColorF0Red'); } catch (_) {}
+  try {
+    if (window.tizen && tizen.tvinputdevice) {
+      ['ColorF0Red', 'ColorF1Green', 'ColorF2Yellow', 'ColorF3Blue'].forEach(function (k) {
+        try { tizen.tvinputdevice.registerKey(k); } catch (_) {}
+      });
+    }
+  } catch (_) {}
   document.addEventListener('keydown', function (e) {
-    if (e.keyCode === 403) { visivel = !visivel; render(); }
+    var k = e.keyCode;
+    if (k === 403) { visivel = !visivel; render(); }
+    else if (k === 404) alterna('h264', 'Teste so H.264/AAC');
+    else if (k === 406) alterna('playready', 'Teste so PlayReady');
+    else if (k === 405) {
+      var naOficial = location.hostname.indexOf('ctv.') === 0;
+      log('info', naOficial ? 'Voltando para o site...' : 'Abrindo app oficial de TV...');
+      setTimeout(function () { location.href = naOficial ? 'https://www.recordplus.com/' : OFICIAL; }, 800);
+    } else return;
+    if (principal) { e.preventDefault(); e.stopPropagation(); }
   }, true);
 
   /* ---------- start ---------- */
@@ -509,6 +577,10 @@
   log('info', 'UA: ' + navigator.userAgent);
   if (faltaSintaxe.length) log('sintaxe', 'Motor NAO entende (sem polyfill possivel): ' + faltaSintaxe.join(', '));
   if (faltaApi.length) log('info', 'APIs ausentes, polyfill aplicado: ' + faltaApi.join(', '));
+  log('info', 'Testes: H.264 ' + (opc.h264 ? 'LIGADO' : 'off') + ' | PlayReady ' + (opc.playready ? 'LIGADO' : 'off') +
+    ' | player nativo (webapis.avplay): ' + (window.webapis && webapis.avplay ? 'SIM' : 'nao'));
+  try { log('info', 'SUPPORTED_BROWSER = ' + curto(localStorage.getItem('SUPPORTED_BROWSER'), 80)); } catch (_) {}
+  log('ok', 'Controle: VERMELHO esconde barra | VERDE so H.264 | AMARELO app oficial de TV | AZUL so PlayReady');
 
   var voltas = 0;
   document.addEventListener('DOMContentLoaded', varrerScripts);

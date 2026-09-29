@@ -1,11 +1,11 @@
 {
   "name": "recordplus-diag",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Diagnostico do RecordPlus em TV Samsung Tizen 5.5",
   "packageType": "mods",
   "appName": "RecordPlus Diag",
   "websiteURL": "https://www.recordplus.com",
   "main": "main.js",
-  "keys": [],
+  "keys": ["ColorF0Red", "ColorF1Green", "ColorF2Yellow", "ColorF3Blue"],
   "license": "MIT"
 }
